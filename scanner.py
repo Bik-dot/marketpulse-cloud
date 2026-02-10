@@ -23,8 +23,11 @@ sectors = {
     "PSU": ["SBIN.NS", "NTPC.NS", "COALINDIA.NS", "POWERGRID.NS"]
 }
 
-send_alert("MarketPulse Institutional Scanner Live")
+startup_flag = False
 
+if not startup_flag:
+    send_alert("MarketPulse Institutional Scanner Running")
+    startup_flag = True
 def get_signal(symbol):
     try:
         data = yf.download(symbol, period="1d", interval="1m")
