@@ -1,8 +1,10 @@
 import requests
 import yfinance as yf
+import pandas as pd
+import numpy as np
 import time
 
-# TELEGRAM SETTINGS
+# TELEGRAM
 BOT_TOKEN = "8310483280:AAEfkiBbZ_fk4Hg8eqma37ts2rc3D0Wy-EA"
 CHAT_ID = "1368954408"
 
@@ -10,33 +12,70 @@ def send_alert(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": message})
 
-# NSE WATCHLIST (starter universe — later full India)
-stocks = [
-    "^NSEI", "^NSEBANK", "RELIANCE.NS", "TCS.NS", "INFY.NS",
-    "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "ITC.NS"
-]
 
-send_alert("MarketPulse Cloud Scanner Started")
+# NSE SECTOR WATCHLIST (Institutional Core Universe)
+sectors = {
+    "BANKING": ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS"],
+    "IT": ["TCS.NS", "INFY.NS", "WIPRO.NS", "HCLTECH.NS"],
+    "ENERGY": ["RELIANCE.NS", "ONGC.NS", "BPCL.NS", "IOC.NS"],
+    "PHARMA": ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS"],
+    "AUTO": ["TATAMOTORS.NS", "MARUTI.NS", "M&M.NS"],
+    "PSU": ["SBIN.NS", "NTPC.NS", "COALINDIA.NS", "POWERGRID.NS"]
+}
+
+send_alert("MarketPulse Institutional Scanner Live")
+
+def get_signal(symbol):
+    try:
+        data = yf.download(symbol, period="1d", interval="1m")
+
+        price = data["Close"].iloc[-1]
+        ema = data["Close"].ewm(span=20).mean().iloc[-1]
+
+        volume = data["Volume"].iloc[-1]
+        avg_volume = data["Volume"].rolling(20).mean().iloc[-1]
+
+        atr = (data["High"] - data["Low"]).rolling(14).mean().iloc[-1]
+
+        breakout = price > data["High"].rolling(10).max().iloc[-1]
+        trend = price > ema
+        volume_spike = volume > avg_volume * 1.5
+        volatility = atr > atr.mean()
+
+        score = sum([breakout, trend, volume_spike, volatility])
+
+        return score
+
+    except:
+        return 0
+
 
 while True:
-    movers = []
+    sector_scores = {}
 
-    for symbol in stocks:
-        try:
-            data = yf.download(symbol, period="1d", interval="5m")
-            last_close = data["Close"].iloc[-1]
-            prev_close = data["Close"].iloc[-2]
+    # 1-MINUTE MARKET SCAN
+    for sector, stocks in sectors.items():
+        total_score = 0
 
-            change = ((last_close - prev_close) / prev_close) * 100
+        for stock in stocks:
+            total_score += get_signal(stock)
 
-            if abs(change) > 0.5:
-                movers.append(f"{symbol} move {round(change,2)}%")
+        sector_scores[sector] = total_score
 
-        except:
-            continue
+    # FIND HOT SECTOR
+    best_sector = max(sector_scores, key=sector_scores.get)
 
-    if movers:
-        msg = "Top movers:\n" + "\n".join(movers)
-        send_alert(msg)
+    # ALERT ONLY IF STRONG
+    if sector_scores[best_sector] > 6:
+        message = f"""
+SECTOR ACTIVE: {best_sector}
 
-    time.sleep(300)
+Institutional momentum detected.
+Volume + Trend + Breakout alignment.
+"""
+        send_alert(message)
+
+    # Hybrid mode:
+    # scan every 1 min
+    time.sleep(60)
+
