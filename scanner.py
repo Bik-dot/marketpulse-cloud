@@ -7,18 +7,26 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytz
 
-IST = pytz.timezone('Asia/Kolkata')
-
+# ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
+UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET")
+UPSTOX_MODE = os.getenv("UPSTOX_MODE")
+UPSTOX_PAPER = os.getenv("UPSTOX_PAPER")
+
+IST = pytz.timezone('Asia/Kolkata')
+
+# ================= TELEGRAM =================
 def send_alert(message):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message}, timeout=10)
-    except Exception as e:
-        print("Telegram Error:", e)
+        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
+    except:
+        pass
 
+# ================= WATCHLIST =================
 stocks = [
 "RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS",
 "ITC.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS","HINDUNILVR.NS",
@@ -32,14 +40,15 @@ stocks = [
 "SHREECEM.NS","UPL.NS","DIVISLAB.NS","CIPLA.NS","BRITANNIA.NS"
 ]
 
+# ================= RISK MEMORY =================
 alert_cooldown_minutes = 45
 last_alert_time = {}
-
 LOG_FILE = "signal_memory.csv"
 
 if not os.path.exists(LOG_FILE):
     pd.DataFrame(columns=["time","stock","change","volume","trend","confidence"]).to_csv(LOG_FILE, index=False)
 
+# ================= HELPERS =================
 def get_price(value):
     try:
         if hasattr(value, "values"):
@@ -52,7 +61,6 @@ def is_market_open():
     now = datetime.now(IST)
     if now.weekday() >= 5:
         return False
-
     start = now.replace(hour=9, minute=15, second=0)
     end = now.replace(hour=15, minute=30, second=0)
     return start <= now <= end
@@ -65,15 +73,12 @@ def can_send_alert(stock):
     last_alert_time[stock] = now
     return True
 
+# ================= TREND =================
 def get_trend(data):
     try:
         ema20 = get_price(data["Close"].ewm(span=20).mean().iloc[-1])
         ema50 = get_price(data["Close"].ewm(span=50).mean().iloc[-1])
         price = get_price(data["Close"].iloc[-1])
-
-        if ema20 is None or ema50 is None or price is None:
-            return "UNKNOWN"
-
         if price > ema20 and ema20 > ema50:
             return "UPTREND"
         elif price < ema20 and ema20 < ema50:
@@ -83,55 +88,65 @@ def get_trend(data):
     except:
         return "UNKNOWN"
 
+# ================= CONFIDENCE =================
 def confidence_score(change, volume, avg_volume, trend):
     score = 0
-
     if abs(change) > 1:
         score += 40
     elif abs(change) > 0.7:
         score += 30
     elif abs(change) > 0.4:
         score += 20
-
     if volume > avg_volume:
         score += 25
-
-    if trend in ["UPTREND", "DOWNTREND"]:
+    if trend in ["UPTREND","DOWNTREND"]:
         score += 30
-
     return score
 
-def save_signal(stock, change, volume, trend, confidence):
-    row = {
-        "time": datetime.now(IST),
-        "stock": stock,
-        "change": change,
-        "volume": volume,
-        "trend": trend,
-        "confidence": confidence
-    }
-    pd.DataFrame([row]).to_csv(LOG_FILE, mode='a', header=False, index=False)
+# ================= EXECUTION ENGINE =================
+def execute_paper_trade(stock, price, confidence, trend):
+    capital = 12000
 
+    if confidence >= 80:
+        allocation = 4000
+        risk = 240
+        grade = "A"
+    elif confidence >= 65:
+        allocation = 2500
+        risk = 180
+        grade = "B"
+    else:
+        allocation = 1500
+        risk = 120
+        grade = "C"
+
+    stop_loss = round(price * 0.99, 2)
+
+    msg = f"""
+TRADE SIGNAL (PAPER MODE)
+
+Stock: {stock}
+Trend: {trend}
+Confidence: {confidence}
+Grade: {grade}
+
+Capital: ₹{allocation}
+Risk: ₹{risk}
+Stop Loss: {stop_loss}
+"""
+
+    print(msg)
+    send_alert(msg)
+
+# ================= SCANNER =================
 def check_market():
-    movers = []
-
     if not is_market_open():
-        print("Market closed (IST).")
-        return movers
+        print("Market closed.")
+        return
 
     for s in stocks:
         try:
-            print(f"Checking {s}")
-
-            data = yf.download(
-                s,
-                period="2d",
-                interval="5m",
-                progress=False,
-                threads=False
-            )
-
-            # remove latest incomplete candle
+            data = yf.download(s, period="2d", interval="5m", progress=False, threads=False)
             if data is not None and len(data) > 2:
                 data = data.iloc[:-1]
 
@@ -143,9 +158,6 @@ def check_market():
 
             volume = get_price(data["Volume"].iloc[-1])
             avg_volume = get_price(data["Volume"].rolling(10).mean().iloc[-1])
-
-            if last is None or prev is None or prev == 0:
-                continue
 
             change = ((last - prev) / prev) * 100
 
@@ -161,37 +173,18 @@ def check_market():
             if not can_send_alert(s):
                 continue
 
-            save_signal(s, change, volume, trend, confidence)
-
-            movers.append(f"{s} {round(change,2)}% | Conf:{confidence} | {trend}")
+            execute_paper_trade(s, last, confidence, trend)
 
         except Exception as e:
-            print(f"Error in {s}:", e)
+            print("Error:", e)
             traceback.print_exc()
 
-    return movers
-
-def run_scanner():
-    print("MarketPulse PRO Scanner LIVE")
-    send_alert("MarketPulse PRO Scanner ACTIVE")
-
+# ================= LOOP =================
+def run():
+    send_alert("MarketPulse Trading Engine Started (Paper Mode)")
     while True:
-        try:
-            movers = check_market()
-
-            if movers:
-                msg = "PRO Signals:\n" + "\n".join(movers)
-                print(msg)
-                send_alert(msg)
-            else:
-                print("No institutional signals.")
-
-            time.sleep(180)
-
-        except Exception as e:
-            print("Main loop error:", e)
-            traceback.print_exc()
-            time.sleep(60)
+        check_market()
+        time.sleep(180)
 
 if __name__ == "__main__":
-    run_scanner()
+    run()
