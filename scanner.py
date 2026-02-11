@@ -4,11 +4,10 @@ import yfinance as yf
 import traceback
 import os
 
-# --- ENV VARIABLES (SAFE FOR RAILWAY) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-# -------- TELEGRAM ALERT --------
+
 def send_alert(message):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -17,11 +16,9 @@ def send_alert(message):
         print("Telegram Error:", e)
 
 
-# -------- WATCHLIST --------
 stocks = ["RELIANCE.NS", "HDFCBANK.NS", "SBIN.NS"]
 
 
-# -------- MARKET CHECK FUNCTION --------
 def check_market():
     movers = []
 
@@ -55,12 +52,10 @@ def check_market():
         except Exception as e:
             print(f"Error in {s}:", e)
             traceback.print_exc()
-            continue
 
     return movers
 
 
-# -------- MAIN LOOP --------
 def run_scanner():
     print("Scanner started successfully...")
 
@@ -83,11 +78,7 @@ def run_scanner():
             time.sleep(60)
 
 
-# -------- START --------
 if __name__ == "__main__":
     run_scanner()
 
-
-    except Exception as e:
-        time.sleep(60)
 
