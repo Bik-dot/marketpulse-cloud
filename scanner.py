@@ -3,6 +3,7 @@ import time
 import yfinance as yf
 import traceback
 import os
+from datetime import datetime, timedelta
 
 # --- ENV VARIABLES ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -20,6 +21,10 @@ def send_alert(message):
 # -------- WATCHLIST --------
 stocks = ["RELIANCE.NS", "HDFCBANK.NS", "SBIN.NS"]
 
+# -------- DUPLICATE ALERT MEMORY --------
+alert_cooldown_minutes = 45
+last_alert_time = {}  # stock : datetime
+
 
 # -------- SAFE PRICE EXTRACTOR --------
 def get_price(value):
@@ -29,6 +34,19 @@ def get_price(value):
         return float(value)
     except:
         return None
+
+
+# -------- DUPLICATE CHECK --------
+def can_send_alert(stock):
+    now = datetime.now()
+
+    if stock in last_alert_time:
+        last_time = last_alert_time[stock]
+        if now - last_time < timedelta(minutes=alert_cooldown_minutes):
+            return False
+
+    last_alert_time[stock] = now
+    return True
 
 
 # -------- MARKET CHECK FUNCTION --------
@@ -59,8 +77,14 @@ def check_market():
 
             change = ((last - prev) / prev) * 100
 
+            # SIGNAL CONDITION
             if abs(change) > 0.7:
-                movers.append(f"{s} move {round(change,2)}%")
+
+                # DUPLICATE BLOCKER
+                if can_send_alert(s):
+                    movers.append(f"{s} move {round(change,2)}%")
+                else:
+                    print(f"{s} alert skipped (cooldown active)")
 
         except Exception as e:
             print(f"Error in {s}:", e)
@@ -73,8 +97,7 @@ def check_market():
 def run_scanner():
     print("Scanner started successfully...")
 
-    # Send startup alert once
-    send_alert("MarketPulse Scanner LIVE on Railway")
+    send_alert("MarketPulse Scanner LIVE (duplicate blocker active)")
 
     while True:
         try:
