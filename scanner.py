@@ -141,12 +141,13 @@ def check_market():
 
             data = yf.download(
                 s,
-                period="1d",
+                period="2d",
                 interval="5m",
                 progress=False,
                 threads=False
             )
-
+# Drop latest incomplete candle
+data = data.iloc[:-1]
             if data is None or data.empty or len(data) < 15:
                 continue
 
