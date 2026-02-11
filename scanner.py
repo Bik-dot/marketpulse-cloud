@@ -162,7 +162,7 @@ def check_market():
             change = ((last - prev) / prev) * 100
 
             # ===== MOMENTUM FILTER (NEW) =====
-            if abs(change) < 0.4:
+            if abs(change) < 0.25:
                 continue
 
             trend = get_trend(data)
