@@ -149,7 +149,7 @@ def check_market():
 
             change = ((last - prev) / prev) * 100
 
-            if abs(change) < 0.15:
+            if abs(change) < 0.4:
                 continue
 
             trend = get_trend(data)
