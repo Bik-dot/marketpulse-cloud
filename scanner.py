@@ -7,10 +7,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytz
 
-# ================= TIMEZONE =================
 IST = pytz.timezone('Asia/Kolkata')
 
-# ================= TELEGRAM =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -21,7 +19,6 @@ def send_alert(message):
     except Exception as e:
         print("Telegram Error:", e)
 
-# ================= NIFTY 50 WATCHLIST =================
 stocks = [
 "RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS",
 "ITC.NS","LT.NS","AXISBANK.NS","KOTAKBANK.NS","HINDUNILVR.NS",
@@ -35,17 +32,14 @@ stocks = [
 "SHREECEM.NS","UPL.NS","DIVISLAB.NS","CIPLA.NS","BRITANNIA.NS"
 ]
 
-# ================= DUPLICATE ALERT MEMORY =================
 alert_cooldown_minutes = 45
 last_alert_time = {}
 
-# ================= SIGNAL MEMORY CSV =================
 LOG_FILE = "signal_memory.csv"
 
 if not os.path.exists(LOG_FILE):
     pd.DataFrame(columns=["time","stock","change","volume","trend","confidence"]).to_csv(LOG_FILE, index=False)
 
-# ================= SAFE VALUE EXTRACTION =================
 def get_price(value):
     try:
         if hasattr(value, "values"):
@@ -54,30 +48,23 @@ def get_price(value):
     except:
         return None
 
-# ================= MARKET HOURS (IST) =================
 def is_market_open():
     now = datetime.now(IST)
-
     if now.weekday() >= 5:
         return False
 
     start = now.replace(hour=9, minute=15, second=0)
     end = now.replace(hour=15, minute=30, second=0)
-
     return start <= now <= end
 
-# ================= DUPLICATE BLOCKER =================
 def can_send_alert(stock):
     now = datetime.now(IST)
-
     if stock in last_alert_time:
         if now - last_alert_time[stock] < timedelta(minutes=alert_cooldown_minutes):
             return False
-
     last_alert_time[stock] = now
     return True
 
-# ================= TREND DETECTOR =================
 def get_trend(data):
     try:
         ema20 = get_price(data["Close"].ewm(span=20).mean().iloc[-1])
@@ -96,7 +83,6 @@ def get_trend(data):
     except:
         return "UNKNOWN"
 
-# ================= CONFIDENCE SCORE =================
 def confidence_score(change, volume, avg_volume, trend):
     score = 0
 
@@ -115,7 +101,6 @@ def confidence_score(change, volume, avg_volume, trend):
 
     return score
 
-# ================= SAVE SIGNAL =================
 def save_signal(stock, change, volume, trend, confidence):
     row = {
         "time": datetime.now(IST),
@@ -127,7 +112,6 @@ def save_signal(stock, change, volume, trend, confidence):
     }
     pd.DataFrame([row]).to_csv(LOG_FILE, mode='a', header=False, index=False)
 
-# ================= MAIN SCAN ENGINE =================
 def check_market():
     movers = []
 
@@ -146,8 +130,11 @@ def check_market():
                 progress=False,
                 threads=False
             )
-# Drop latest incomplete candle
-data = data.iloc[:-1]
+
+            # remove latest incomplete candle
+            if data is not None and len(data) > 2:
+                data = data.iloc[:-1]
+
             if data is None or data.empty or len(data) < 15:
                 continue
 
@@ -162,8 +149,7 @@ data = data.iloc[:-1]
 
             change = ((last - prev) / prev) * 100
 
-            # ===== MOMENTUM FILTER (NEW) =====
-            if abs(change) < 0.25:
+            if abs(change) < 0.4:
                 continue
 
             trend = get_trend(data)
@@ -185,10 +171,8 @@ data = data.iloc[:-1]
 
     return movers
 
-# ================= LOOP =================
 def run_scanner():
     print("MarketPulse PRO Scanner LIVE")
-
     send_alert("MarketPulse PRO Scanner ACTIVE")
 
     while True:
@@ -209,6 +193,5 @@ def run_scanner():
             traceback.print_exc()
             time.sleep(60)
 
-# ================= START =================
 if __name__ == "__main__":
     run_scanner()
