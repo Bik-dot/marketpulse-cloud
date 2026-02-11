@@ -5,6 +5,10 @@ import traceback
 import os
 from datetime import datetime, timedelta
 import pandas as pd
+import pytz
+
+# --- TIMEZONE FIX ---
+IST = pytz.timezone('Asia/Kolkata')
 
 # --- ENV VARIABLES ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -30,7 +34,7 @@ last_alert_time = {}
 LOG_FILE = "signal_memory.csv"
 
 if not os.path.exists(LOG_FILE):
-    df = pd.DataFrame(columns=["time","stock","change","volume","trend"])
+    df = pd.DataFrame(columns=["time","stock","change","volume","trend","confidence"])
     df.to_csv(LOG_FILE, index=False)
 
 
@@ -44,11 +48,10 @@ def get_price(value):
         return None
 
 
-# -------- NSE MARKET HOURS FILTER --------
+# -------- MARKET HOURS (IST FIXED) --------
 def is_market_open():
-    now = datetime.now()
+    now = datetime.now(IST)
 
-    # weekday check
     if now.weekday() >= 5:
         return False
 
@@ -60,11 +63,10 @@ def is_market_open():
 
 # -------- DUPLICATE CHECK --------
 def can_send_alert(stock):
-    now = datetime.now()
+    now = datetime.now(IST)
 
     if stock in last_alert_time:
-        last_time = last_alert_time[stock]
-        if now - last_time < timedelta(minutes=alert_cooldown_minutes):
+        if now - last_alert_time[stock] < timedelta(minutes=alert_cooldown_minutes):
             return False
 
     last_alert_time[stock] = now
@@ -73,30 +75,45 @@ def can_send_alert(stock):
 
 # -------- TREND DETECTOR --------
 def get_trend(data):
-    try:
-        ema20 = data["Close"].ewm(span=20).mean().iloc[-1]
-        ema50 = data["Close"].ewm(span=50).mean().iloc[-1]
+    ema20 = data["Close"].ewm(span=20).mean().iloc[-1]
+    ema50 = data["Close"].ewm(span=50).mean().iloc[-1]
+    price = get_price(data["Close"].iloc[-1])
 
-        price = get_price(data["Close"].iloc[-1])
-
-        if price > ema20 > ema50:
-            return "UPTREND"
-        elif price < ema20 < ema50:
-            return "DOWNTREND"
-        else:
-            return "SIDEWAYS"
-    except:
-        return "UNKNOWN"
+    if price > ema20 > ema50:
+        return "UPTREND"
+    elif price < ema20 < ema50:
+        return "DOWNTREND"
+    else:
+        return "SIDEWAYS"
 
 
-# -------- SIGNAL MEMORY SAVE --------
-def save_signal(stock, change, volume, trend):
+# -------- CONFIDENCE SCORE --------
+def confidence_score(change, volume, avg_volume, trend):
+    score = 0
+
+    if abs(change) > 1:
+        score += 40
+    elif abs(change) > 0.7:
+        score += 25
+
+    if volume > avg_volume:
+        score += 30
+
+    if trend != "SIDEWAYS":
+        score += 30
+
+    return score
+
+
+# -------- SAVE SIGNAL --------
+def save_signal(stock, change, volume, trend, confidence):
     row = {
-        "time": datetime.now(),
+        "time": datetime.now(IST),
         "stock": stock,
         "change": change,
         "volume": volume,
-        "trend": trend
+        "trend": trend,
+        "confidence": confidence
     }
     pd.DataFrame([row]).to_csv(LOG_FILE, mode='a', header=False, index=False)
 
@@ -105,22 +122,15 @@ def save_signal(stock, change, volume, trend):
 def check_market():
     movers = []
 
-    # Market hours check
     if not is_market_open():
-        print("Market closed. Scanner idle.")
+        print("Market closed (IST).")
         return movers
 
     for s in stocks:
         try:
             print(f"Checking {s}")
 
-            data = yf.download(
-                s,
-                period="1d",
-                interval="5m",
-                progress=False,
-                threads=False
-            )
+            data = yf.download(s, period="1d", interval="5m", progress=False, threads=False)
 
             if data is None or data.empty or len(data) < 10:
                 continue
@@ -136,33 +146,19 @@ def check_market():
 
             change = ((last - prev) / prev) * 100
 
-            # -------- SIGNAL FILTERS --------
-
-            # 1) price move filter
-            if abs(change) < 0.7:
-                continue
-
-            # 2) volume confirmation
-            if volume < avg_volume:
-                print(f"{s} weak volume")
-                continue
-
-            # 3) trend confirmation
             trend = get_trend(data)
 
-            if trend == "SIDEWAYS":
-                print(f"{s} sideways skip")
+            confidence = confidence_score(change, volume, avg_volume, trend)
+
+            if confidence < 60:
                 continue
 
-            # 4) duplicate blocker
             if not can_send_alert(s):
-                print(f"{s} cooldown active")
                 continue
 
-            # Save signal for learning
-            save_signal(s, change, volume, trend)
+            save_signal(s, change, volume, trend, confidence)
 
-            movers.append(f"{s} {round(change,2)}% | Vol↑ | {trend}")
+            movers.append(f"{s} {round(change,2)}% | Conf:{confidence} | {trend}")
 
         except Exception as e:
             print(f"Error in {s}:", e)
@@ -173,20 +169,20 @@ def check_market():
 
 # -------- MAIN LOOP --------
 def run_scanner():
-    print("MarketPulse Intelligent Scanner LIVE")
+    print("MarketPulse PRO Scanner LIVE")
 
-    send_alert("MarketPulse Intelligent Scanner ACTIVE")
+    send_alert("MarketPulse PRO Scanner ACTIVE")
 
     while True:
         try:
             movers = check_market()
 
             if movers:
-                msg = "High-Quality Signals:\n" + "\n".join(movers)
+                msg = "PRO Signals:\n" + "\n".join(movers)
                 print(msg)
                 send_alert(msg)
             else:
-                print("No strong signals.")
+                print("No institutional signals.")
 
             time.sleep(180)
 
