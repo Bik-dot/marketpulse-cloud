@@ -6,15 +6,16 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 import pytz
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+# ================= MEMORY STORE =================
+live_signals = []
 
 # ================= ENV =================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-
-UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
-UPSTOX_API_SECRET = os.getenv("UPSTOX_API_SECRET")
-UPSTOX_MODE = os.getenv("UPSTOX_MODE")
-UPSTOX_PAPER = os.getenv("UPSTOX_PAPER")
 
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -40,14 +41,6 @@ stocks = [
 "SHREECEM.NS","UPL.NS","DIVISLAB.NS","CIPLA.NS","BRITANNIA.NS"
 ]
 
-# ================= RISK MEMORY =================
-alert_cooldown_minutes = 45
-last_alert_time = {}
-LOG_FILE = "signal_memory.csv"
-
-if not os.path.exists(LOG_FILE):
-    pd.DataFrame(columns=["time","stock","change","volume","trend","confidence"]).to_csv(LOG_FILE, index=False)
-
 # ================= HELPERS =================
 def get_price(value):
     try:
@@ -64,14 +57,6 @@ def is_market_open():
     start = now.replace(hour=9, minute=15, second=0)
     end = now.replace(hour=15, minute=30, second=0)
     return start <= now <= end
-
-def can_send_alert(stock):
-    now = datetime.now(IST)
-    if stock in last_alert_time:
-        if now - last_alert_time[stock] < timedelta(minutes=alert_cooldown_minutes):
-            return False
-    last_alert_time[stock] = now
-    return True
 
 # ================= TREND =================
 def get_trend(data):
@@ -103,88 +88,70 @@ def confidence_score(change, volume, avg_volume, trend):
         score += 30
     return score
 
-# ================= EXECUTION ENGINE =================
-def execute_paper_trade(stock, price, confidence, trend):
-    capital = 12000
-
-    if confidence >= 80:
-        allocation = 4000
-        risk = 240
-        grade = "A"
-    elif confidence >= 65:
-        allocation = 2500
-        risk = 180
-        grade = "B"
-    else:
-        allocation = 1500
-        risk = 120
-        grade = "C"
-
-    stop_loss = round(price * 0.99, 2)
-
-    msg = f"""
-TRADE SIGNAL (PAPER MODE)
-
-Stock: {stock}
-Trend: {trend}
-Confidence: {confidence}
-Grade: {grade}
-
-Capital: ₹{allocation}
-Risk: ₹{risk}
-Stop Loss: {stop_loss}
-"""
-
-    print(msg)
-    send_alert(msg)
-
 # ================= SCANNER =================
-def check_market():
-    if not is_market_open():
-        print("Market closed.")
-        return
+def run_scanner():
+    global live_signals
 
-    for s in stocks:
-        try:
-            data = yf.download(s, period="2d", interval="5m", progress=False, threads=False)
-            if data is not None and len(data) > 2:
-                data = data.iloc[:-1]
-
-            if data is None or data.empty or len(data) < 15:
-                continue
-
-            last = get_price(data["Close"].iloc[-1])
-            prev = get_price(data["Close"].iloc[-2])
-
-            volume = get_price(data["Volume"].iloc[-1])
-            avg_volume = get_price(data["Volume"].rolling(10).mean().iloc[-1])
-
-            change = ((last - prev) / prev) * 100
-
-            if abs(change) < 0.4:
-                continue
-
-            trend = get_trend(data)
-            confidence = confidence_score(change, volume, avg_volume, trend)
-
-            if confidence < 45:
-                continue
-
-            if not can_send_alert(s):
-                continue
-
-            execute_paper_trade(s, last, confidence, trend)
-
-        except Exception as e:
-            print("Error:", e)
-            traceback.print_exc()
-
-# ================= LOOP =================
-def run():
-    send_alert("MarketPulse Trading Engine Started (Paper Mode)")
     while True:
-        check_market()
+        if not is_market_open():
+            time.sleep(60)
+            continue
+
+        for s in stocks:
+            try:
+                data = yf.download(s, period="2d", interval="5m", progress=False, threads=False)
+                if data is not None and len(data) > 2:
+                    data = data.iloc[:-1]
+
+                if data is None or data.empty or len(data) < 15:
+                    continue
+
+                last = get_price(data["Close"].iloc[-1])
+                prev = get_price(data["Close"].iloc[-2])
+                volume = get_price(data["Volume"].iloc[-1])
+                avg_volume = get_price(data["Volume"].rolling(10).mean().iloc[-1])
+
+                change = ((last - prev) / prev) * 100
+
+                if abs(change) < 0.4:
+                    continue
+
+                trend = get_trend(data)
+                confidence = confidence_score(change, volume, avg_volume, trend)
+
+                if confidence < 45:
+                    continue
+
+                signal = {
+                    "time": str(datetime.now(IST)),
+                    "stock": s,
+                    "change": round(change,2),
+                    "trend": trend,
+                    "confidence": confidence
+                }
+
+                live_signals.insert(0, signal)
+                live_signals = live_signals[:50]
+
+                send_alert(f"Signal: {s} | Conf:{confidence} | {trend}")
+
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
+
         time.sleep(180)
 
+# ================= API =================
+@app.route("/signals")
+def signals():
+    return jsonify(live_signals)
+
+@app.route("/status")
+def status():
+    return {"status":"running"}
+
+# ================= START =================
 if __name__ == "__main__":
-    run()
+    from threading import Thread
+    Thread(target=run_scanner).start()
+    app.run(host="0.0.0.0", port=8080)
