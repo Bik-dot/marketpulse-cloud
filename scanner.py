@@ -4,10 +4,11 @@ import yfinance as yf
 import traceback
 import os
 
+# --- ENV VARIABLES ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-
+# -------- TELEGRAM ALERT --------
 def send_alert(message):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -16,9 +17,21 @@ def send_alert(message):
         print("Telegram Error:", e)
 
 
+# -------- WATCHLIST --------
 stocks = ["RELIANCE.NS", "HDFCBANK.NS", "SBIN.NS"]
 
 
+# -------- SAFE PRICE EXTRACTOR --------
+def get_price(value):
+    try:
+        if hasattr(value, "values"):
+            value = value.values[0]
+        return float(value)
+    except:
+        return None
+
+
+# -------- MARKET CHECK FUNCTION --------
 def check_market():
     movers = []
 
@@ -38,10 +51,10 @@ def check_market():
                 print(f"No data for {s}")
                 continue
 
-            last = float(data["Close"].iloc[-1])
-            prev = float(data["Close"].iloc[-2])
+            last = get_price(data["Close"].iloc[-1])
+            prev = get_price(data["Close"].iloc[-2])
 
-            if prev == 0:
+            if last is None or prev is None or prev == 0:
                 continue
 
             change = ((last - prev) / prev) * 100
@@ -56,8 +69,12 @@ def check_market():
     return movers
 
 
+# -------- MAIN LOOP --------
 def run_scanner():
     print("Scanner started successfully...")
+
+    # Send startup alert once
+    send_alert("MarketPulse Scanner LIVE on Railway")
 
     while True:
         try:
@@ -78,7 +95,6 @@ def run_scanner():
             time.sleep(60)
 
 
+# -------- START --------
 if __name__ == "__main__":
     run_scanner()
-
-
