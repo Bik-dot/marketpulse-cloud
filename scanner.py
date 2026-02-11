@@ -102,8 +102,10 @@ def confidence_score(change, volume, avg_volume, trend):
 
     if abs(change) > 1:
         score += 40
-    elif abs(change) > 0.6:
-        score += 25
+    elif abs(change) > 0.7:
+        score += 30
+    elif abs(change) > 0.4:
+        score += 20
 
     if volume > avg_volume:
         score += 25
@@ -158,6 +160,10 @@ def check_market():
                 continue
 
             change = ((last - prev) / prev) * 100
+
+            # ===== MOMENTUM FILTER (NEW) =====
+            if abs(change) < 0.4:
+                continue
 
             trend = get_trend(data)
             confidence = confidence_score(change, volume, avg_volume, trend)
