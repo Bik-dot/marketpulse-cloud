@@ -146,7 +146,7 @@ def check_market():
 
             confidence = confidence_score(change, volume, avg_volume, trend)
 
-            if confidence < 60:
+            if confidence < 40:
                 continue
 
             if not can_send_alert(s):
