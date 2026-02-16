@@ -149,6 +149,15 @@ def signals():
 @app.route("/status")
 def status():
     return {"status":"running"}
+             from flask import request
+
+@app.route("/system-log", methods=["POST"])
+def receive_system_log():
+    data = request.json
+    
+    print("SYSTEM LOG RECEIVED:", data)
+    
+    return {"status": "ok"}, 200
 
 # ================= START =================
 if __name__ == "__main__":
