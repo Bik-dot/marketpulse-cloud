@@ -3,9 +3,10 @@ import time
 import yfinance as yf
 import traceback
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import pytz
+import sqlite3
 from flask import Flask, jsonify, request
 from threading import Thread
 
@@ -19,6 +20,41 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 IST = pytz.timezone('Asia/Kolkata')
+
+# ================= DATABASE =================
+DB_FILE = "signals.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            time TEXT,
+            stock TEXT,
+            change REAL,
+            trend TEXT,
+            confidence INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def save_signal(signal):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO signals (time, stock, change, trend, confidence)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        signal["time"],
+        signal["stock"],
+        signal["change"],
+        signal["trend"],
+        signal["confidence"]
+    ))
+    conn.commit()
+    conn.close()
 
 # ================= TELEGRAM =================
 def send_alert(message):
@@ -143,6 +179,7 @@ def run_scanner():
                     live_signals.insert(0, signal)
                     live_signals = live_signals[:50]
 
+                    save_signal(signal)
                     send_alert(f"Signal: {s} | Conf:{confidence} | {trend}")
 
                 except Exception as e:
@@ -173,5 +210,6 @@ def receive_system_log():
 
 # ================= START =================
 if __name__ == "__main__":
+    init_db()
     Thread(target=run_scanner).start()
     app.run(host="0.0.0.0", port=8080)
