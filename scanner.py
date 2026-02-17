@@ -198,6 +198,29 @@ def run_scanner():
 def signals():
     return jsonify(live_signals)
 
+@app.route("/history")
+def history():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT time, stock, change, trend, confidence FROM signals ORDER BY id DESC")
+        rows = c.fetchall()
+        conn.close()
+
+        history_data = []
+        for r in rows:
+            history_data.append({
+                "time": r[0],
+                "stock": r[1],
+                "change": r[2],
+                "trend": r[3],
+                "confidence": r[4]
+            })
+
+        return jsonify(history_data)
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.route("/status")
 def status():
     return {"status":"running"}
