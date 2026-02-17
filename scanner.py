@@ -6,7 +6,8 @@ import os
 from datetime import datetime, timedelta
 import pandas as pd
 import pytz
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
+from threading import Thread
 
 app = Flask(__name__)
 
@@ -22,8 +23,9 @@ IST = pytz.timezone('Asia/Kolkata')
 # ================= TELEGRAM =================
 def send_alert(message):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": CHAT_ID, "text": message})
+        if BOT_TOKEN and CHAT_ID:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            requests.post(url, data={"chat_id": CHAT_ID, "text": message})
     except:
         pass
 
@@ -82,10 +84,13 @@ def confidence_score(change, volume, avg_volume, trend):
         score += 30
     elif abs(change) > 0.4:
         score += 20
-    if volume > avg_volume:
+
+    if volume and avg_volume and volume > avg_volume:
         score += 25
+
     if trend in ["UPTREND","DOWNTREND"]:
         score += 30
+
     return score
 
 # ================= SCANNER =================
@@ -93,53 +98,63 @@ def run_scanner():
     global live_signals
 
     while True:
-        if not is_market_open():
+        try:
+            if not is_market_open():
+                time.sleep(60)
+                continue
+
+            for s in stocks:
+                try:
+                    data = yf.download(s, period="2d", interval="5m", progress=False, threads=False)
+
+                    if data is not None and len(data) > 2:
+                        data = data.iloc[:-1]
+
+                    if data is None or data.empty or len(data) < 15:
+                        continue
+
+                    last = get_price(data["Close"].iloc[-1])
+                    prev = get_price(data["Close"].iloc[-2])
+                    volume = get_price(data["Volume"].iloc[-1])
+                    avg_volume = get_price(data["Volume"].rolling(10).mean().iloc[-1])
+
+                    if not last or not prev:
+                        continue
+
+                    change = ((last - prev) / prev) * 100
+
+                    if abs(change) < 0.4:
+                        continue
+
+                    trend = get_trend(data)
+                    confidence = confidence_score(change, volume, avg_volume, trend)
+
+                    if confidence < 45:
+                        continue
+
+                    signal = {
+                        "time": str(datetime.now(IST)),
+                        "stock": s,
+                        "change": round(change,2),
+                        "trend": trend,
+                        "confidence": confidence
+                    }
+
+                    live_signals.insert(0, signal)
+                    live_signals = live_signals[:50]
+
+                    send_alert(f"Signal: {s} | Conf:{confidence} | {trend}")
+
+                except Exception as e:
+                    print("Scanner error:", e)
+                    traceback.print_exc()
+
+            time.sleep(180)
+
+        except Exception as e:
+            print("Main loop error:", e)
+            traceback.print_exc()
             time.sleep(60)
-            continue
-
-        for s in stocks:
-            try:
-                data = yf.download(s, period="2d", interval="5m", progress=False, threads=False)
-                if data is not None and len(data) > 2:
-                    data = data.iloc[:-1]
-
-                if data is None or data.empty or len(data) < 15:
-                    continue
-
-                last = get_price(data["Close"].iloc[-1])
-                prev = get_price(data["Close"].iloc[-2])
-                volume = get_price(data["Volume"].iloc[-1])
-                avg_volume = get_price(data["Volume"].rolling(10).mean().iloc[-1])
-
-                change = ((last - prev) / prev) * 100
-
-                if abs(change) < 0.4:
-                    continue
-
-                trend = get_trend(data)
-                confidence = confidence_score(change, volume, avg_volume, trend)
-
-                if confidence < 45:
-                    continue
-
-                signal = {
-                    "time": str(datetime.now(IST)),
-                    "stock": s,
-                    "change": round(change,2),
-                    "trend": trend,
-                    "confidence": confidence
-                }
-
-                live_signals.insert(0, signal)
-                live_signals = live_signals[:50]
-
-                send_alert(f"Signal: {s} | Conf:{confidence} | {trend}")
-
-            except Exception as e:
-                print(e)
-                traceback.print_exc()
-
-        time.sleep(180)
 
 # ================= API =================
 @app.route("/signals")
@@ -149,18 +164,14 @@ def signals():
 @app.route("/status")
 def status():
     return {"status":"running"}
-             from flask import request
 
 @app.route("/system-log", methods=["POST"])
 def receive_system_log():
     data = request.json
-    
     print("SYSTEM LOG RECEIVED:", data)
-    
     return {"status": "ok"}, 200
 
 # ================= START =================
 if __name__ == "__main__":
-    from threading import Thread
     Thread(target=run_scanner).start()
     app.run(host="0.0.0.0", port=8080)
